@@ -2,7 +2,7 @@
 
 echo
 
-docker-compose run --rm node npm $@
+docker-compose run -u $(id -u ${USER}):$(id -g ${USER}) --rm node npm $@
 
 echo
 echo
