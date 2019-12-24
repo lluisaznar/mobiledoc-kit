@@ -635,7 +635,6 @@ var Renderer = (function () {
 
         method = postNode.type;
         (0, _utilsAssert['default'])('EditorDom visitor cannot handle type ' + method, !!this.visitor[method]);
-        // jshint -W083
         this.visitor[method](renderNode, postNode, function () {
           for (var _len = arguments.length, args = Array(_len), _key = 0; _key < _len; _key++) {
             args[_key] = arguments[_key];
@@ -643,7 +642,6 @@ var Renderer = (function () {
 
           return _this2.visit.apply(_this2, [renderTree].concat(args));
         });
-        // jshint +W083
         renderNode.markClean();
         renderNode = this.nodes.shift();
       }

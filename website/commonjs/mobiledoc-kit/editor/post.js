@@ -1039,13 +1039,11 @@ var PostEditor = (function () {
       if (positionIsMiddle) {
         var item = position.section;
 
-        var _splitListItem3 = // jshint ignore:line
-        this._splitListItem(item, position);
+        var _splitListItem3 = this._splitListItem(item, position);
 
-        var _splitListItem32 = _slicedToArray(_splitListItem3, 2);
+        var _splitListItem32 = _slicedToArray(_splitListItem3, 1);
 
         var pre = _splitListItem32[0];
-        var post = _splitListItem32[1];
 
         position = pre.tailPosition();
       }
@@ -1137,12 +1135,10 @@ var PostEditor = (function () {
 
       var _splitListAtItem2 = this._splitListAtItem(listSection, section);
 
-      var _splitListAtItem22 = _slicedToArray(_splitListAtItem2, 3);
+      var _splitListAtItem22 = _slicedToArray(_splitListAtItem2, 2);
 
-      var prev = _splitListAtItem22[0];
       var mid = _splitListAtItem22[1];
-      var next = _splitListAtItem22[2];
-      // jshint ignore:line
+
       this.replaceSection(mid, markupSection);
       return markupSection;
     }
@@ -1162,12 +1158,10 @@ var PostEditor = (function () {
       if (section.isListItem) {
         var _splitListAtItem3 = this._splitListAtItem(section.parent, section);
 
-        var _splitListAtItem32 = _slicedToArray(_splitListAtItem3, 3);
+        var _splitListAtItem32 = _slicedToArray(_splitListAtItem3, 2);
 
-        var prev = _splitListAtItem32[0];
         var mid = _splitListAtItem32[1];
-        var next = _splitListAtItem32[2];
-        // jshint ignore:line
+
         sectionToReplace = mid;
       } else {
         sectionToReplace = section;

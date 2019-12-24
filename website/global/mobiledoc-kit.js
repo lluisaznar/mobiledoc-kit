@@ -4,8 +4,6 @@ var loader, define, requireModule, require, requirejs;
 (function (global) {
   'use strict';
 
-  var heimdall = global.heimdall;
-
   function dict() {
     var obj = Object.create(null);
     obj['__'] = undefined;
@@ -22,9 +20,9 @@ var loader, define, requireModule, require, requirejs;
     requirejs: requirejs
   };
 
-  requirejs = require = requireModule = function (name) {
+  requirejs = require = requireModule = function (id) {
     var pending = [];
-    var mod = findModule(name, '(require)', pending);
+    var mod = findModule(id, '(require)', pending);
 
     for (var i = pending.length - 1; i >= 0; i--) {
       pending[i].exports();
@@ -47,17 +45,10 @@ var loader, define, requireModule, require, requirejs;
           }
         }
       }
-    }
+    },
+    // Option to enable or disable the generation of default exports
+    makeDefaultExport: true
   };
-
-  var _isArray;
-  if (!Array.isArray) {
-    _isArray = function (x) {
-      return Object.prototype.toString.call(x) === '[object Array]';
-    };
-  } else {
-    _isArray = Array.isArray;
-  }
 
   var registry = dict();
   var seen = dict();
@@ -65,14 +56,14 @@ var loader, define, requireModule, require, requirejs;
   var uuid = 0;
 
   function unsupportedModule(length) {
-    throw new Error('an unsupported module was defined, expected `define(name, deps, module)` instead got: `' + length + '` arguments to define`');
+    throw new Error('an unsupported module was defined, expected `define(id, deps, module)` instead got: `' + length + '` arguments to define`');
   }
 
   var defaultDeps = ['require', 'exports', 'module'];
 
-  function Module(name, deps, callback, alias) {
-    this.id = uuid++;
-    this.name = name;
+  function Module(id, deps, callback, alias) {
+    this.uuid = uuid++;
+    this.id = id;
     this.deps = !deps.length && callback.length ? defaultDeps : deps;
     this.module = { exports: {} };
     this.callback = callback;
@@ -106,19 +97,23 @@ var loader, define, requireModule, require, requirejs;
       return this.module.exports;
     }
 
+
     if (loader.wrapModules) {
-      this.callback = loader.wrapModules(this.name, this.callback);
+      this.callback = loader.wrapModules(this.id, this.callback);
     }
 
     this.reify();
 
     var result = this.callback.apply(this, this.reified);
+    this.reified.length = 0;
     this.state = 'finalized';
 
     if (!(this.hasExportsAsDep && result === undefined)) {
       this.module.exports = result;
     }
-    this.makeDefaultExport();
+    if (loader.makeDefaultExport) {
+      this.makeDefaultExport();
+    }
     return this.module.exports;
   };
 
@@ -171,27 +166,28 @@ var loader, define, requireModule, require, requirejs;
       } else if (dep === 'module') {
         entry.exports = this.module;
       } else {
-        entry.module = findModule(resolve(dep, this.name), this.name, pending);
+        entry.module = findModule(resolve(dep, this.id), this.id, pending);
       }
     }
   };
 
   Module.prototype.makeRequire = function () {
-    var name = this.name;
+    var id = this.id;
     var r = function (dep) {
-      return require(resolve(dep, name));
+      return require(resolve(dep, id));
     };
     r['default'] = r;
+    r.moduleId = id;
     r.has = function (dep) {
-      return has(resolve(dep, name));
+      return has(resolve(dep, id));
     };
     return r;
   };
 
-  define = function (name, deps, callback) {
-    var module = registry[name];
+  define = function (id, deps, callback) {
+    var module = registry[id];
 
-    // If a module for this name has already been defined and is in any state
+    // If a module for this id has already been defined and is in any state
     // other than `new` (meaning it has been or is currently being required),
     // then we return early to avoid redefinition.
     if (module && module.state !== 'new') {
@@ -202,42 +198,65 @@ var loader, define, requireModule, require, requirejs;
       unsupportedModule(arguments.length);
     }
 
-    if (!_isArray(deps)) {
+    if (!Array.isArray(deps)) {
       callback = deps;
       deps = [];
     }
 
     if (callback instanceof Alias) {
-      registry[name] = new Module(callback.name, deps, callback, true);
+      registry[id] = new Module(callback.id, deps, callback, true);
     } else {
-      registry[name] = new Module(name, deps, callback, false);
+      registry[id] = new Module(id, deps, callback, false);
     }
   };
 
+  define.exports = function (name, defaultExport) {
+    var module = registry[name];
+
+    // If a module for this name has already been defined and is in any state
+    // other than `new` (meaning it has been or is currently being required),
+    // then we return early to avoid redefinition.
+    if (module && module.state !== 'new') {
+      return;
+    }
+
+    module = new Module(name, [], noop, null);
+    module.module.exports = defaultExport;
+    module.state = 'finalized';
+    registry[name] = module;
+
+    return module;
+  };
+
+  function noop() {}
   // we don't support all of AMD
   // define.amd = {};
 
-  function Alias(path) {
-    this.name = path;
+  function Alias(id) {
+    this.id = id;
   }
 
-  define.alias = function (path) {
-    return new Alias(path);
+  define.alias = function (id, target) {
+    if (arguments.length === 2) {
+      return define(target, new Alias(id));
+    }
+
+    return new Alias(id);
   };
 
-  function missingModule(name, referrer) {
-    throw new Error('Could not find module `' + name + '` imported from `' + referrer + '`');
+  function missingModule(id, referrer) {
+    throw new Error('Could not find module `' + id + '` imported from `' + referrer + '`');
   }
 
-  function findModule(name, referrer, pending) {
-    var mod = registry[name] || registry[name + '/index'];
+  function findModule(id, referrer, pending) {
+    var mod = registry[id] || registry[id + '/index'];
 
     while (mod && mod.isAlias) {
-      mod = registry[mod.name];
+      mod = registry[mod.id] || registry[mod.id + '/index'];
     }
 
     if (!mod) {
-      missingModule(name, referrer);
+      missingModule(id, referrer);
     }
 
     if (pending && mod.state !== 'pending' && mod.state !== 'finalized') {
@@ -247,13 +266,14 @@ var loader, define, requireModule, require, requirejs;
     return mod;
   }
 
-  function resolve(child, name) {
+  function resolve(child, id) {
     if (child.charAt(0) !== '.') {
       return child;
     }
 
+
     var parts = child.split('/');
-    var nameParts = name.split('/');
+    var nameParts = id.split('/');
     var parentBase = nameParts.slice(0, -1);
 
     for (var i = 0, l = parts.length; i < l; i++) {
@@ -274,14 +294,14 @@ var loader, define, requireModule, require, requirejs;
     return parentBase.join('/');
   }
 
-  function has(name) {
-    return !!(registry[name] || registry[name + '/index']);
+  function has(id) {
+    return !!(registry[id] || registry[id + '/index']);
   }
 
   requirejs.entries = requirejs._eak_seen = registry;
   requirejs.has = has;
-  requirejs.unsee = function (moduleName) {
-    findModule(moduleName, '(unsee)', false).unsee();
+  requirejs.unsee = function (id) {
+    findModule(id, '(unsee)', false).unsee();
   };
 
   requirejs.clear = function () {
@@ -300,9 +320,12 @@ var loader, define, requireModule, require, requirejs;
   });
   define('foo/baz', [], define.alias('foo'));
   define('foo/quz', define.alias('foo'));
+  define.alias('foo', 'foo/qux');
   define('foo/bar', ['foo', './quz', './baz', './asdf', './bar', '../foo'], function () {});
   define('foo/main', ['foo/bar'], function () {});
+  define.exports('foo/exports', {});
 
+  require('foo/exports');
   require('foo/main');
   require.unsee('foo/bar');
 
@@ -1480,8 +1503,6 @@ define('mobiledoc-kit/cards/image', ['exports', 'mobiledoc-kit/utils/placeholder
     type: 'dom',
 
     render: function render(_ref) {
-      var env = _ref.env;
-      var options = _ref.options;
       var payload = _ref.payload;
 
       var img = document.createElement('img');
@@ -1848,9 +1869,10 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
   });
 
   var defaults = {
-    placeholder: 'Write here...',
+    placeholder: 'Write motherfuckin\' here...',
     spellcheck: true,
     autofocus: true,
+    showLinkTooltips: true,
     undoDepth: 5,
     undoBlockTimeout: 5000, // ms for an undo event
     cards: [],
@@ -1904,6 +1926,8 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
    *     a custom toolbar.
    *   * {@link Editor#onTextInput} -- Register callbacks when the user enters text
    *     that matches a given string or regex.
+   *   * {@link Editor#beforeToggleMarkup} -- Register callbacks that will be run before
+   *     applying changes from {@link Editor#toggleMarkup}
    */
 
   var Editor = (function () {
@@ -1924,6 +1948,7 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
      * @param {String} [options.placeholder] Default text to show before user starts typing.
      * @param {Boolean} [options.spellcheck=true] Whether to enable spellcheck
      * @param {Boolean} [options.autofocus=true] Whether to focus the editor when it is first rendered.
+     * @param {Boolean} [options.showLinkTooltips=true] Whether to show the url tooltip for links
      * @param {number} [options.undoDepth=5] How many undo levels will be available.
      *        Set to 0 to disable undo/redo functionality.
      * @return {Editor}
@@ -1939,7 +1964,7 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
 
       (0, _mobiledocKitUtilsAssert['default'])('editor create accepts an options object. For legacy usage passing an element for the first argument, consider the `html` option for loading DOM or HTML posts. For other cases call `editor.render(domNode)` after editor creation', options && !options.nodeType);
       this._views = [];
-      this.isEditable = null;
+      this.isEditable = true;
       this._parserPlugins = options.parserPlugins || [];
 
       // FIXME: This should merge onto this.options
@@ -1968,6 +1993,7 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
       this._mutationHandler = new _mobiledocKitEditorMutationHandler['default'](this);
       this._editState = new _mobiledocKitEditorEditState['default'](this);
       this._callbacks = new _mobiledocKitModelsLifecycleCallbacks['default']((0, _mobiledocKitUtilsArrayUtils.values)(CALLBACK_QUEUES));
+      this._beforeHooks = { toggleMarkup: [] };
 
       _mobiledocKitEditorTextInputHandlers.DEFAULT_TEXT_INPUT_HANDLERS.forEach(function (handler) {
         return _this.onTextInput(handler);
@@ -2074,11 +2100,9 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
 
         this.element = element;
 
-        if (this.isEditable === null) {
-          this.enableEditing();
+        if (this.showLinkTooltips) {
+          this._addTooltip();
         }
-
-        this._addTooltip();
 
         // A call to `run` will trigger the didUpdatePostCallbacks hooks with a
         // postEditor.
@@ -2092,6 +2116,12 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
 
         this._mutationHandler.init();
         this._eventManager.init();
+
+        if (this.isEditable === false) {
+          this.disableEditing();
+        } else {
+          this.enableEditing();
+        }
 
         if (this.autofocus) {
           this.selectRange(this.post.headPosition());
@@ -2420,15 +2450,17 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
 
           switch (format) {
             case 'html':
-              var result = undefined;
-              if (_mobiledocKitUtilsEnvironment['default'].hasDOM()) {
-                rendered = new _mobiledocDomRenderer['default'](rendererOptions).render(mobiledoc);
-                result = '<div>' + (0, _mobiledocKitUtilsDomUtils.serializeHTML)(rendered.result) + '</div>';
-              } else {
-                // Fallback to text serialization
-                result = this.serializePost(post, 'text', options);
+              {
+                var result = undefined;
+                if (_mobiledocKitUtilsEnvironment['default'].hasDOM()) {
+                  rendered = new _mobiledocDomRenderer['default'](rendererOptions).render(mobiledoc);
+                  result = '<div>' + (0, _mobiledocKitUtilsDomUtils.serializeHTML)(rendered.result) + '</div>';
+                } else {
+                  // Fallback to text serialization
+                  result = this.serializePost(post, 'text', options);
+                }
+                return result;
               }
-              return result;
             case 'text':
               rendered = new _mobiledocTextRenderer['default'](rendererOptions).render(mobiledoc);
               return rendered.result;
@@ -2493,12 +2525,9 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
     }, {
       key: 'disableEditing',
       value: function disableEditing() {
-        if (this.isEditable === false) {
-          return;
-        }
-
         this.isEditable = false;
         if (this.hasRendered) {
+          this._eventManager.stop();
           this.element.setAttribute('contentEditable', false);
           this.setPlaceholder('');
           this.selectRange(_mobiledocKitUtilsCursorRange['default'].blankRange());
@@ -2516,7 +2545,8 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
       key: 'enableEditing',
       value: function enableEditing() {
         this.isEditable = true;
-        if (this.element) {
+        if (this.hasRendered) {
+          this._eventManager.start();
           this.element.setAttribute('contentEditable', true);
           this.setPlaceholder(this.placeholder);
         }
@@ -2755,20 +2785,53 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
       }
 
       /**
+       * @callback editorBeforeCallback
+       * @param { Object } details
+       * @param { Markup } details.markup
+       * @param { Range } details.range
+       * @param { boolean } details.willAdd Whether the markup will be applied
+       */
+
+      /**
+       * Register a callback that will be run before {@link Editor#toggleMarkup} is applied.
+       * If any callback returns literal `false`, the toggling of markup will be canceled.
+       * Note this only applies to calling `editor#toggleMarkup`. Using `editor.run` and
+       * modifying markup with the `postEditor` will skip any `beforeToggleMarkup` callbacks.
+       * @param {editorBeforeCallback}
+       */
+    }, {
+      key: 'beforeToggleMarkup',
+      value: function beforeToggleMarkup(callback) {
+        this._beforeHooks.toggleMarkup.push(callback);
+      }
+
+      /**
        * Toggles the given markup at the editor's current {@link Range}.
        * If the range is collapsed this changes the editor's state so that the
        * next characters typed will be affected. If there is text selected
        * (aka a non-collapsed range), the selections' markup will be toggled.
        * If the editor is not focused and has no active range, nothing happens.
+       * Hooks added using #beforeToggleMarkup will be run before toggling,
+       * and if any of them returns literal false, toggling the markup will be canceled
+       * and no change will be applied.
        * @param {String} markup E.g. "b", "em", "a"
+       * @param {Object} [attributes={}] E.g. {href: "http://bustle.com"}
        * @public
        * @see PostEditor#toggleMarkup
        */
     }, {
       key: 'toggleMarkup',
       value: function toggleMarkup(markup) {
-        markup = this.builder.createMarkup(markup);
+        var attributes = arguments.length <= 1 || arguments[1] === undefined ? {} : arguments[1];
+
+        markup = this.builder.createMarkup(markup, attributes);
         var range = this.range;
+
+        var willAdd = !this.detectMarkupInRange(range, markup.tagName);
+        var shouldCancel = this._runBeforeHooks('toggleMarkup', { markup: markup, range: range, willAdd: willAdd });
+        if (shouldCancel) {
+          return;
+        }
 
         if (range.isCollapsed) {
           this._editState.toggleMarkupState(markup);
@@ -3059,6 +3122,28 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
         }
         (_callbacks3 = this._callbacks).runCallbacks.apply(_callbacks3, arguments);
       }
+
+      /**
+       * Runs each callback for the given hookName.
+       * Only the hookName 'toggleMarkup' is currently supported
+       * @return {Boolean} shouldCancel Whether the action in `hookName` should be canceled
+       * @private
+       */
+    }, {
+      key: '_runBeforeHooks',
+      value: function _runBeforeHooks(hookName) {
+        var hooks = this._beforeHooks[hookName] || [];
+
+        for (var _len = arguments.length, args = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+          args[_key - 1] = arguments[_key];
+        }
+
+        for (var i = 0; i < hooks.length; i++) {
+          if (hooks[i].apply(hooks, args) === false) {
+            return true;
+          }
+        }
+      }
     }, {
       key: 'builder',
       get: function get() {
@@ -3145,12 +3230,11 @@ define('mobiledoc-kit/editor/event-manager', ['exports', 'mobiledoc-kit/utils/as
       this._textInputHandler = new _mobiledocKitEditorTextInputHandler['default'](editor);
       this._listeners = [];
       this.modifierKeys = {
-        shift: false,
-        alt: false,
-        ctrl: false
+        shift: false
       };
 
       this._selectionManager = new _mobiledocKitEditorSelectionManager['default'](this.editor, this.selectionDidChange.bind(this));
+      this.started = true;
     }
 
     _createClass(EventManager, [{
@@ -3167,6 +3251,16 @@ define('mobiledoc-kit/editor/event-manager', ['exports', 'mobiledoc-kit/utils/as
         });
 
         this._selectionManager.start();
+      }
+    }, {
+      key: 'start',
+      value: function start() {
+        this.started = true;
+      }
+    }, {
+      key: 'stop',
+      value: function stop() {
+        this.started = false;
       }
     }, {
       key: 'registerInputHandler',
@@ -3228,7 +3322,6 @@ define('mobiledoc-kit/editor/event-manager', ['exports', 'mobiledoc-kit/utils/as
           var _ref42 = _slicedToArray(_ref4, 3);
 
           var context = _ref42[0];
-          var type = _ref42[1];
           var listener = _ref42[2];
 
           listener.call(context, event);
@@ -3245,6 +3338,11 @@ define('mobiledoc-kit/editor/event-manager', ['exports', 'mobiledoc-kit/utils/as
       key: '_handleEvent',
       value: function _handleEvent(type, event) {
         var element = event.target;
+
+        if (!this.started) {
+          // abort handling this event
+          return true;
+        }
 
         if (!this.isElementAddressable(element)) {
           // abort handling this event
@@ -3328,29 +3426,34 @@ define('mobiledoc-kit/editor/event-manager', ['exports', 'mobiledoc-kit/utils/as
         switch (true) {
           // FIXME This should be restricted to only card/atom boundaries
           case key.isHorizontalArrowWithoutModifiersOtherThanShift():
-            var newRange = undefined;
-            if (key.isShift()) {
-              newRange = range.extend(key.direction * 1);
-            } else {
-              newRange = range.move(key.direction);
-            }
+            {
+              var newRange = undefined;
+              if (key.isShift()) {
+                newRange = range.extend(key.direction * 1);
+              } else {
+                newRange = range.move(key.direction);
+              }
 
-            editor.selectRange(newRange);
-            event.preventDefault();
-            break;
+              editor.selectRange(newRange);
+              event.preventDefault();
+              break;
+            }
           case key.isDelete():
-            var direction = key.direction;
+            {
+              var direction = key.direction;
 
-            var unit = 'char';
-            if (this.modifierKeys.alt && _mobiledocKitUtilsBrowser['default'].isMac()) {
-              unit = 'word';
-            } else if (this.modifierKeys.ctrl && _mobiledocKitUtilsBrowser['default'].isWin()) {
-              unit = 'word';
+              var unit = 'char';
+              if (key.altKey && _mobiledocKitUtilsBrowser['default'].isMac()) {
+                unit = 'word';
+              } else if (key.ctrlKey && !_mobiledocKitUtilsBrowser['default'].isMac()) {
+                unit = 'word';
+              }
+              editor.performDelete({ direction: direction, unit: unit });
+              event.preventDefault();
+              break;
             }
-            editor.performDelete({ direction: direction, unit: unit });
-            event.preventDefault();
-            break;
           case key.isEnter():
+            this._textInputHandler.handleNewLine();
             editor.handleNewline(event);
             break;
           case key.isTab():
@@ -3458,10 +3561,6 @@ define('mobiledoc-kit/editor/event-manager', ['exports', 'mobiledoc-kit/utils/as
 
         if (key.isShiftKey()) {
           this.modifierKeys.shift = isDown;
-        } else if (key.isAltKey()) {
-          this.modifierKeys.alt = isDown;
-        } else if (key.isCtrlKey()) {
-          this.modifierKeys.ctrl = isDown;
         }
       }
     }]);
@@ -3636,7 +3735,7 @@ define('mobiledoc-kit/editor/key-commands', ['exports', 'mobiledoc-kit/utils/key
 
   function characterToCode(character) {
     var upperCharacter = character.toUpperCase();
-    var special = _mobiledocKitUtilsKey.SPECIAL_KEYS[upperCharacter];
+    var special = (0, _mobiledocKitUtilsKey.specialCharacterToCode)(upperCharacter);
     if (special) {
       return special;
     } else {
@@ -4890,13 +4989,11 @@ define('mobiledoc-kit/editor/post', ['exports', 'mobiledoc-kit/utils/cursor/posi
         if (positionIsMiddle) {
           var item = position.section;
 
-          var _splitListItem3 = // jshint ignore:line
-          this._splitListItem(item, position);
+          var _splitListItem3 = this._splitListItem(item, position);
 
-          var _splitListItem32 = _slicedToArray(_splitListItem3, 2);
+          var _splitListItem32 = _slicedToArray(_splitListItem3, 1);
 
           var pre = _splitListItem32[0];
-          var post = _splitListItem32[1];
 
           position = pre.tailPosition();
         }
@@ -4988,12 +5085,10 @@ define('mobiledoc-kit/editor/post', ['exports', 'mobiledoc-kit/utils/cursor/posi
 
         var _splitListAtItem2 = this._splitListAtItem(listSection, section);
 
-        var _splitListAtItem22 = _slicedToArray(_splitListAtItem2, 3);
+        var _splitListAtItem22 = _slicedToArray(_splitListAtItem2, 2);
 
-        var prev = _splitListAtItem22[0];
         var mid = _splitListAtItem22[1];
-        var next = _splitListAtItem22[2];
-        // jshint ignore:line
+
         this.replaceSection(mid, markupSection);
         return markupSection;
       }
@@ -5013,12 +5108,10 @@ define('mobiledoc-kit/editor/post', ['exports', 'mobiledoc-kit/utils/cursor/posi
         if (section.isListItem) {
           var _splitListAtItem3 = this._splitListAtItem(section.parent, section);
 
-          var _splitListAtItem32 = _slicedToArray(_splitListAtItem3, 3);
+          var _splitListAtItem32 = _slicedToArray(_splitListAtItem3, 2);
 
-          var prev = _splitListAtItem32[0];
           var mid = _splitListAtItem32[1];
-          var next = _splitListAtItem32[2];
-          // jshint ignore:line
+
           sectionToReplace = mid;
         } else {
           sectionToReplace = section;
@@ -5417,12 +5510,10 @@ define('mobiledoc-kit/editor/post/post-inserter', ['exports', 'mobiledoc-kit/uti
         } else {
           var _breakListAtCursor2 = this._breakListAtCursor();
 
-          var _breakListAtCursor22 = _slicedToArray(_breakListAtCursor2, 3);
+          var _breakListAtCursor22 = _slicedToArray(_breakListAtCursor2, 2);
 
-          var pre = _breakListAtCursor22[0];
           var blank = _breakListAtCursor22[1];
-          var post = _breakListAtCursor22[2];
-          // jshint ignore:line
+
           this.cursorPosition = blank.tailPosition();
         }
       }
@@ -5497,13 +5588,11 @@ define('mobiledoc-kit/editor/post/post-inserter', ['exports', 'mobiledoc-kit/uti
     }, {
       key: '_breakMarkerableAtCursor',
       value: function _breakMarkerableAtCursor() {
-        var _postEditor$splitSection = // jshint ignore:line
-        this.postEditor.splitSection(this.cursorPosition);
+        var _postEditor$splitSection = this.postEditor.splitSection(this.cursorPosition);
 
-        var _postEditor$splitSection2 = _slicedToArray(_postEditor$splitSection, 2);
+        var _postEditor$splitSection2 = _slicedToArray(_postEditor$splitSection, 1);
 
         var pre = _postEditor$splitSection2[0];
-        var post = _postEditor$splitSection2[1];
 
         this.cursorPosition = pre.tailPosition();
       }
@@ -5609,7 +5698,9 @@ define('mobiledoc-kit/editor/post/post-inserter', ['exports', 'mobiledoc-kit/uti
       key: 'insert',
       value: function insert(cursorPosition, newPost) {
         var visitor = new Visitor(this, cursorPosition);
-        visitor.visit(newPost);
+        if (!newPost.isBlank) {
+          visitor.visit(newPost);
+        }
         return visitor.cursorPosition;
       }
     }]);
@@ -5806,7 +5897,7 @@ define('mobiledoc-kit/editor/selection-manager', ['exports', 'mobiledoc-kit/edit
 
   exports['default'] = SelectionManager;
 });
-define('mobiledoc-kit/editor/text-input-handler', ['exports', 'mobiledoc-kit/utils/string-utils', 'mobiledoc-kit/utils/assert', 'mobiledoc-kit/utils/deprecate'], function (exports, _mobiledocKitUtilsStringUtils, _mobiledocKitUtilsAssert, _mobiledocKitUtilsDeprecate) {
+define('mobiledoc-kit/editor/text-input-handler', ['exports', 'mobiledoc-kit/utils/string-utils', 'mobiledoc-kit/utils/assert', 'mobiledoc-kit/utils/deprecate', 'mobiledoc-kit/utils/characters'], function (exports, _mobiledocKitUtilsStringUtils, _mobiledocKitUtilsAssert, _mobiledocKitUtilsDeprecate, _mobiledocKitUtilsCharacters) {
   'use strict';
 
   var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i['return']) _i['return'](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError('Invalid attempt to destructure non-iterable instance'); } }; })();
@@ -5857,13 +5948,29 @@ define('mobiledoc-kit/editor/text-input-handler', ['exports', 'mobiledoc-kit/uti
         }
       }
     }, {
+      key: 'handleNewLine',
+      value: function handleNewLine() {
+        var editor = this.editor;
+
+        var matchedHandler = this._findHandler(_mobiledocKitUtilsCharacters.ENTER);
+        if (matchedHandler) {
+          var _matchedHandler2 = _slicedToArray(matchedHandler, 2);
+
+          var handler = _matchedHandler2[0];
+          var matches = _matchedHandler2[1];
+
+          handler.run(editor, matches);
+        }
+      }
+    }, {
       key: '_findHandler',
       value: function _findHandler() {
+        var string = arguments.length <= 0 || arguments[0] === undefined ? "" : arguments[0];
         var _editor$range = this.editor.range;
         var head = _editor$range.head;
         var section = _editor$range.head.section;
 
-        var preText = section.textUntil(head);
+        var preText = section.textUntil(head) + string;
 
         for (var i = 0; i < this._handlers.length; i++) {
           var handler = this._handlers[i];
@@ -6066,24 +6173,19 @@ define('mobiledoc-kit/editor/ui', ['exports'], function (exports) {
     var hasLink = editor.detectMarkupInRange(range, 'a');
 
     if (hasLink) {
-      editor.run(function (postEditor) {
-        return postEditor.toggleMarkup('a');
-      });
+      editor.toggleMarkup('a');
     } else {
       showPrompt('Enter a URL', defaultUrl, function (url) {
         if (!url) {
           return;
         }
 
-        editor.run(function (postEditor) {
-          var markup = postEditor.builder.createMarkup('a', { href: url });
-          postEditor.toggleMarkup(markup);
-        });
+        editor.toggleMarkup('a', { href: url });
       });
     }
   }
 });
-define('mobiledoc-kit', ['exports', 'mobiledoc-kit/editor/editor', 'mobiledoc-kit/editor/ui', 'mobiledoc-kit/cards/image', 'mobiledoc-kit/utils/cursor/range', 'mobiledoc-kit/utils/cursor/position', 'mobiledoc-kit/utils/mobiledoc-error', 'mobiledoc-kit/version'], function (exports, _mobiledocKitEditorEditor, _mobiledocKitEditorUi, _mobiledocKitCardsImage, _mobiledocKitUtilsCursorRange, _mobiledocKitUtilsCursorPosition, _mobiledocKitUtilsMobiledocError, _mobiledocKitVersion) {
+define('mobiledoc-kit', ['exports', 'mobiledoc-kit/editor/editor', 'mobiledoc-kit/editor/ui', 'mobiledoc-kit/cards/image', 'mobiledoc-kit/utils/cursor/range', 'mobiledoc-kit/utils/cursor/position', 'mobiledoc-kit/utils/mobiledoc-error', 'mobiledoc-kit/version', 'mobiledoc-kit/renderers/mobiledoc'], function (exports, _mobiledocKitEditorEditor, _mobiledocKitEditorUi, _mobiledocKitCardsImage, _mobiledocKitUtilsCursorRange, _mobiledocKitUtilsCursorPosition, _mobiledocKitUtilsMobiledocError, _mobiledocKitVersion, _mobiledocKitRenderersMobiledoc) {
   'use strict';
 
   exports.registerGlobal = registerGlobal;
@@ -6095,7 +6197,8 @@ define('mobiledoc-kit', ['exports', 'mobiledoc-kit/editor/editor', 'mobiledoc-ki
     Range: _mobiledocKitUtilsCursorRange['default'],
     Position: _mobiledocKitUtilsCursorPosition['default'],
     Error: _mobiledocKitUtilsMobiledocError['default'],
-    VERSION: _mobiledocKitVersion['default']
+    VERSION: _mobiledocKitVersion['default'],
+    MOBILEDOC_VERSION: _mobiledocKitRenderersMobiledoc.MOBILEDOC_VERSION
   };
 
   function registerGlobal(global) {
@@ -6106,6 +6209,7 @@ define('mobiledoc-kit', ['exports', 'mobiledoc-kit/editor/editor', 'mobiledoc-ki
   exports.UI = _mobiledocKitEditorUi;
   exports.Range = _mobiledocKitUtilsCursorRange['default'];
   exports.Position = _mobiledocKitUtilsCursorPosition['default'];
+  exports.MOBILEDOC_VERSION = _mobiledocKitRenderersMobiledoc.MOBILEDOC_VERSION;
   exports['default'] = Mobiledoc;
 });
 define('mobiledoc-kit/models/_markerable', ['exports', 'mobiledoc-kit/utils/array-utils', 'mobiledoc-kit/utils/set', 'mobiledoc-kit/utils/linked-list', 'mobiledoc-kit/models/_section', 'mobiledoc-kit/utils/assert'], function (exports, _mobiledocKitUtilsArrayUtils, _mobiledocKitUtilsSet, _mobiledocKitUtilsLinkedList, _mobiledocKitModels_section, _mobiledocKitUtilsAssert) {
@@ -6582,7 +6686,7 @@ define('mobiledoc-kit/models/_section', ['exports', 'mobiledoc-kit/utils/dom-uti
       value: function nextLeafSection() {
         var next = this.next;
         if (next) {
-          if (!!next.items) {
+          if (next.items) {
             return next.items.head;
           } else {
             return next;
@@ -6608,7 +6712,7 @@ define('mobiledoc-kit/models/_section', ['exports', 'mobiledoc-kit/utils/dom-uti
         var prev = this.prev;
 
         if (prev) {
-          if (!!prev.items) {
+          if (prev.items) {
             return prev.items.tail;
           } else {
             return prev;
@@ -7609,6 +7713,12 @@ define('mobiledoc-kit/models/markup', ['exports', 'mobiledoc-kit/utils/dom-utils
   var VALID_ATTRIBUTES = ['href', 'rel'];
 
   exports.VALID_ATTRIBUTES = VALID_ATTRIBUTES;
+  /**
+   * A Markup is similar with an inline HTML tag that might be added to
+   * text to modify its meaning and/or display. Examples of types of markup
+   * that could be added are bold ('b'), italic ('i'), strikethrough ('s'), and `a` tags (links).
+   * @property {String} tagName
+   */
 
   var Markup = (function () {
     /*
@@ -7630,6 +7740,12 @@ define('mobiledoc-kit/models/markup', ['exports', 'mobiledoc-kit/utils/dom-utils
       (0, _mobiledocKitUtilsAssert['default'])('Cannot create markup of tagName ' + tagName, VALID_MARKUP_TAGNAMES.indexOf(this.tagName) !== -1);
     }
 
+    /**
+     * Whether text in the forward direction of the cursor (i.e. to the right in ltr text)
+     * should be considered to have this markup applied to it.
+     * @private
+     */
+
     _createClass(Markup, [{
       key: 'isForwardInclusive',
       value: function isForwardInclusive() {
@@ -7645,6 +7761,11 @@ define('mobiledoc-kit/models/markup', ['exports', 'mobiledoc-kit/utils/dom-utils
       value: function hasTag(tagName) {
         return this.tagName === (0, _mobiledocKitUtilsDomUtils.normalizeTagName)(tagName);
       }
+
+      /**
+       * Returns the attribute value
+       * @param {String} name, e.g. "href"
+       */
     }, {
       key: 'getAttribute',
       value: function getAttribute(name) {
@@ -8054,7 +8175,7 @@ define('mobiledoc-kit/models/post', ['exports', 'mobiledoc-kit/models/types', 'm
         if (next) {
           if (next.isLeafSection) {
             return next;
-          } else if (!!next.items) {
+          } else if (next.items) {
             return next.items.head;
           } else {
             (0, _mobiledocKitUtilsAssert['default'])('Cannot determine next section from non-leaf-section', false);
@@ -8104,6 +8225,7 @@ define('mobiledoc-kit/models/post', ['exports', 'mobiledoc-kit/models/types', 'm
             });
           } else {
             newSection = section.clone();
+            sectionParent = post;
           }
           if (sectionParent) {
             sectionParent.sections.append(newSection);
@@ -8413,6 +8535,7 @@ define('mobiledoc-kit/parsers/dom', ['exports', 'mobiledoc-kit/renderers/editor-
   var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
   exports.transformHTMLText = transformHTMLText;
+  exports.trimSectionText = trimSectionText;
 
   function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
 
@@ -8426,6 +8549,17 @@ define('mobiledoc-kit/parsers/dom', ['exports', 'mobiledoc-kit/renderers/editor-
     text = text.replace(NO_BREAK_SPACE_REGEX, ' ');
     text = text.replace(TAB_CHARACTER_REGEX, _mobiledocKitUtilsCharacters.TAB);
     return text;
+  }
+
+  function trimSectionText(section) {
+    if (section.isMarkerable && section.markers.length) {
+      var _section$markers = section.markers;
+      var head = _section$markers.head;
+      var tail = _section$markers.tail;
+
+      head.value = head.value.replace(/^\s+/, '');
+      tail.value = tail.value.replace(/\s+$/, '');
+    }
   }
 
   function isGoogleDocsContainer(element) {
@@ -8500,6 +8634,12 @@ define('mobiledoc-kit/parsers/dom', ['exports', 'mobiledoc-kit/renderers/editor-
           _this.appendSections(post, sections);
         });
 
+        // trim leading/trailing whitespace of markerable sections to avoid
+        // unnessary whitespace from indented HTML input
+        (0, _mobiledocKitUtilsArrayUtils.forEach)(post.sections, function (section) {
+          return trimSectionText(section);
+        });
+
         return post;
       }
     }, {
@@ -8514,7 +8654,9 @@ define('mobiledoc-kit/parsers/dom', ['exports', 'mobiledoc-kit/renderers/editor-
     }, {
       key: 'appendSection',
       value: function appendSection(post, section) {
-        if (section.isBlank || section.isMarkerable && trim(section.text) === '') {
+        if (section.isBlank || section.isMarkerable && trim(section.text) === "" && !(0, _mobiledocKitUtilsArrayUtils.any)(section.markers, function (marker) {
+          return marker.isAtom;
+        })) {
           return;
         }
 
@@ -8788,7 +8930,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-2', ['exports', 'mobiledoc-kit/rendere
     _createClass(MobiledocParser, [{
       key: 'parse',
       value: function parse(_ref) {
-        var version = _ref.version;
         var sectionData = _ref.sections;
 
         try {
@@ -8864,7 +9005,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-2', ['exports', 'mobiledoc-kit/rendere
       value: function parseCardSection(_ref3, post) {
         var _ref32 = _slicedToArray(_ref3, 3);
 
-        var type = _ref32[0];
         var name = _ref32[1];
         var payload = _ref32[2];
 
@@ -8876,7 +9016,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-2', ['exports', 'mobiledoc-kit/rendere
       value: function parseImageSection(_ref4, post) {
         var _ref42 = _slicedToArray(_ref4, 2);
 
-        var type = _ref42[0];
         var src = _ref42[1];
 
         var section = this.builder.createImageSection(src);
@@ -8887,7 +9026,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-2', ['exports', 'mobiledoc-kit/rendere
       value: function parseMarkupSection(_ref5, post) {
         var _ref52 = _slicedToArray(_ref5, 3);
 
-        var type = _ref52[0];
         var tagName = _ref52[1];
         var markers = _ref52[2];
 
@@ -8907,7 +9045,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-2', ['exports', 'mobiledoc-kit/rendere
       value: function parseListSection(_ref6, post) {
         var _ref62 = _slicedToArray(_ref6, 3);
 
-        var type = _ref62[0];
         var tagName = _ref62[1];
         var items = _ref62[2];
 
@@ -8993,7 +9130,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3-1', ['exports', 'mobiledoc-kit/rende
     _createClass(MobiledocParser, [{
       key: 'parse',
       value: function parse(_ref) {
-        var version = _ref.version;
         var sections = _ref.sections;
         var markerTypes = _ref.markups;
         var cardTypes = _ref.cards;
@@ -9124,7 +9260,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3-1', ['exports', 'mobiledoc-kit/rende
       value: function parseCardSection(_ref5, post) {
         var _ref52 = _slicedToArray(_ref5, 2);
 
-        var type = _ref52[0];
         var cardIndex = _ref52[1];
 
         var _getCardTypeFromIndex = this.getCardTypeFromIndex(cardIndex);
@@ -9142,7 +9277,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3-1', ['exports', 'mobiledoc-kit/rende
       value: function parseImageSection(_ref6, post) {
         var _ref62 = _slicedToArray(_ref6, 2);
 
-        var type = _ref62[0];
         var src = _ref62[1];
 
         var section = this.builder.createImageSection(src);
@@ -9153,7 +9287,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3-1', ['exports', 'mobiledoc-kit/rende
       value: function parseMarkupSection(_ref7, post) {
         var _ref72 = _slicedToArray(_ref7, 3);
 
-        var type = _ref72[0];
         var tagName = _ref72[1];
         var markers = _ref72[2];
 
@@ -9173,7 +9306,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3-1', ['exports', 'mobiledoc-kit/rende
       value: function parseListSection(_ref8, post) {
         var _ref82 = _slicedToArray(_ref8, 3);
 
-        var type = _ref82[0];
         var tagName = _ref82[1];
         var items = _ref82[2];
 
@@ -9234,13 +9366,17 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3-1', ['exports', 'mobiledoc-kit/rende
           case _mobiledocKitRenderersMobiledoc031.MOBILEDOC_MARKUP_MARKER_TYPE:
             return this.builder.createMarker(value, this.markups.slice());
           case _mobiledocKitRenderersMobiledoc031.MOBILEDOC_ATOM_MARKER_TYPE:
-            var _getAtomTypeFromIndex = this.getAtomTypeFromIndex(value),
-                _getAtomTypeFromIndex2 = _slicedToArray(_getAtomTypeFromIndex, 3),
-                atomName = _getAtomTypeFromIndex2[0],
-                atomValue = _getAtomTypeFromIndex2[1],
-                atomPayload = _getAtomTypeFromIndex2[2];
+            {
+              var _getAtomTypeFromIndex = this.getAtomTypeFromIndex(value);
 
-            return this.builder.createAtom(atomName, atomValue, atomPayload, this.markups.slice());
+              var _getAtomTypeFromIndex2 = _slicedToArray(_getAtomTypeFromIndex, 3);
+
+              var atomName = _getAtomTypeFromIndex2[0];
+              var atomValue = _getAtomTypeFromIndex2[1];
+              var atomPayload = _getAtomTypeFromIndex2[2];
+
+              return this.builder.createAtom(atomName, atomValue, atomPayload, this.markups.slice());
+            }
           default:
             (0, _mobiledocKitUtilsAssert['default'])('Unexpected marker type ' + type, false);
         }
@@ -9280,7 +9416,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3', ['exports', 'mobiledoc-kit/rendere
     _createClass(MobiledocParser, [{
       key: 'parse',
       value: function parse(_ref) {
-        var version = _ref.version;
         var sections = _ref.sections;
         var markerTypes = _ref.markups;
         var cardTypes = _ref.cards;
@@ -9411,7 +9546,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3', ['exports', 'mobiledoc-kit/rendere
       value: function parseCardSection(_ref5, post) {
         var _ref52 = _slicedToArray(_ref5, 2);
 
-        var type = _ref52[0];
         var cardIndex = _ref52[1];
 
         var _getCardTypeFromIndex = this.getCardTypeFromIndex(cardIndex);
@@ -9429,7 +9563,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3', ['exports', 'mobiledoc-kit/rendere
       value: function parseImageSection(_ref6, post) {
         var _ref62 = _slicedToArray(_ref6, 2);
 
-        var type = _ref62[0];
         var src = _ref62[1];
 
         var section = this.builder.createImageSection(src);
@@ -9440,7 +9573,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3', ['exports', 'mobiledoc-kit/rendere
       value: function parseMarkupSection(_ref7, post) {
         var _ref72 = _slicedToArray(_ref7, 3);
 
-        var type = _ref72[0];
         var tagName = _ref72[1];
         var markers = _ref72[2];
 
@@ -9460,7 +9592,6 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3', ['exports', 'mobiledoc-kit/rendere
       value: function parseListSection(_ref8, post) {
         var _ref82 = _slicedToArray(_ref8, 3);
 
-        var type = _ref82[0];
         var tagName = _ref82[1];
         var items = _ref82[2];
 
@@ -9521,13 +9652,17 @@ define('mobiledoc-kit/parsers/mobiledoc/0-3', ['exports', 'mobiledoc-kit/rendere
           case _mobiledocKitRenderersMobiledoc03.MOBILEDOC_MARKUP_MARKER_TYPE:
             return this.builder.createMarker(value, this.markups.slice());
           case _mobiledocKitRenderersMobiledoc03.MOBILEDOC_ATOM_MARKER_TYPE:
-            var _getAtomTypeFromIndex = this.getAtomTypeFromIndex(value),
-                _getAtomTypeFromIndex2 = _slicedToArray(_getAtomTypeFromIndex, 3),
-                atomName = _getAtomTypeFromIndex2[0],
-                atomValue = _getAtomTypeFromIndex2[1],
-                atomPayload = _getAtomTypeFromIndex2[2];
+            {
+              var _getAtomTypeFromIndex = this.getAtomTypeFromIndex(value);
 
-            return this.builder.createAtom(atomName, atomValue, atomPayload, this.markups.slice());
+              var _getAtomTypeFromIndex2 = _slicedToArray(_getAtomTypeFromIndex, 3);
+
+              var atomName = _getAtomTypeFromIndex2[0];
+              var atomValue = _getAtomTypeFromIndex2[1];
+              var atomPayload = _getAtomTypeFromIndex2[2];
+
+              return this.builder.createAtom(atomName, atomValue, atomPayload, this.markups.slice());
+            }
           default:
             (0, _mobiledocKitUtilsAssert['default'])('Unexpected marker type ' + type, false);
         }
@@ -9575,8 +9710,7 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
 
   var NEWLINES = /\n/g;
   function sanitize(text) {
-    text = text.replace(NEWLINES, '');
-    return text;
+    return text.replace(NEWLINES, ' ');
   }
 
   /**
@@ -9608,11 +9742,17 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
 
         this._updateStateFromElement(element);
 
-        var childNodes = (0, _mobiledocKitUtilsDomUtils.isTextNode)(element) ? [element] : element.childNodes;
+        var finished = false;
 
-        if (this.state.section.isListSection) {
-          this.parseListItems(childNodes);
-        } else {
+        // top-level text nodes will be run through parseNode later so avoid running
+        // the node through parserPlugins twice
+        if (!(0, _mobiledocKitUtilsDomUtils.isTextNode)(element)) {
+          finished = this.runPlugins(element);
+        }
+
+        if (!finished) {
+          var childNodes = (0, _mobiledocKitUtilsDomUtils.isTextNode)(element) ? [element] : element.childNodes;
+
           (0, _mobiledocKitUtilsArrayUtils.forEach)(childNodes, function (el) {
             _this.parseNode(el);
           });
@@ -9623,38 +9763,36 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
         return this.sections;
       }
     }, {
-      key: 'parseListItems',
-      value: function parseListItems(childNodes) {
-        var _this2 = this;
-
-        var state = this.state;
-
-        (0, _mobiledocKitUtilsArrayUtils.forEach)(childNodes, function (el) {
-          var parsed = new _this2.constructor(_this2.builder).parse(el);
-          var li = parsed[0];
-          if (li && li.isListItem) {
-            state.section.items.append(li);
-          }
-        });
-      }
-    }, {
       key: 'runPlugins',
       value: function runPlugins(node) {
-        var _this3 = this;
+        var _this2 = this;
 
         var isNodeFinished = false;
         var env = {
           addSection: function addSection(section) {
-            _this3._closeCurrentSection();
-            _this3.sections.push(section);
+            // avoid creating empty paragraphs due to wrapper elements around
+            // parser-plugin-handled elements
+            if (_this2.state.section && _this2.state.section.isMarkerable && !_this2.state.section.text && !_this2.state.text) {
+              _this2.state.section = null;
+            } else {
+              _this2._closeCurrentSection();
+            }
+            _this2.sections.push(section);
           },
           addMarkerable: function addMarkerable(marker) {
-            var state = _this3.state;
+            var state = _this2.state;
             var section = state.section;
 
+            // if the first element doesn't create it's own state and it's plugin
+            // handler uses `addMarkerable` we won't have a section yet
+            if (!section) {
+              state.text = '';
+              state.section = _this2.builder.createMarkupSection((0, _mobiledocKitUtilsDomUtils.normalizeTagName)('p'));
+              section = state.section;
+            }
             (0, _mobiledocKitUtilsAssert['default'])('Markerables can only be appended to markup sections and list item sections', section && section.isMarkerable);
             if (state.text) {
-              _this3._createMarker();
+              _this2._createMarker();
             }
             section.markers.append(marker);
           },
@@ -9671,9 +9809,13 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
         }
         return false;
       }
+
+      /* eslint-disable complexity */
     }, {
       key: 'parseNode',
       value: function parseNode(node) {
+        var _this3 = this;
+
         if (!this.state.section) {
           this._updateStateFromElement(node);
         }
@@ -9681,6 +9823,72 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
         var nodeFinished = this.runPlugins(node);
         if (nodeFinished) {
           return;
+        }
+
+        // handle closing the current section and starting a new one if we hit a
+        // new-section-creating element.
+        if (this.state.section && !(0, _mobiledocKitUtilsDomUtils.isTextNode)(node) && node.tagName) {
+          var tagName = (0, _mobiledocKitUtilsDomUtils.normalizeTagName)(node.tagName);
+          var isListSection = (0, _mobiledocKitUtilsArrayUtils.contains)(_mobiledocKitModelsListSection.VALID_LIST_SECTION_TAGNAMES, tagName);
+          var isListItem = (0, _mobiledocKitUtilsArrayUtils.contains)(_mobiledocKitModelsListItem.VALID_LIST_ITEM_TAGNAMES, tagName);
+          var isMarkupSection = (0, _mobiledocKitUtilsArrayUtils.contains)(_mobiledocKitModelsMarkupSection.VALID_MARKUP_SECTION_TAGNAMES, tagName);
+          var isNestedListSection = isListSection && this.state.section.isListItem;
+          var lastSection = this.sections[this.sections.length - 1];
+
+          // we can hit a list item after parsing a nested list, when that happens
+          // and the lists are of different types we need to make sure we switch
+          // the list type back
+          if (isListItem && lastSection && lastSection.isListSection) {
+            var parentElement = node.parentElement;
+            var parentElementTagName = (0, _mobiledocKitUtilsDomUtils.normalizeTagName)(parentElement.tagName);
+            if (parentElementTagName !== lastSection.tagName) {
+              this._closeCurrentSection();
+              this._updateStateFromElement(parentElement);
+            }
+          }
+
+          // if we've broken out of a list due to nested section-level elements we
+          // can hit the next list item without having a list section in the current
+          // state. In this instance we find the parent list node and use it to
+          // re-initialize the state with a new list section
+          if (isListItem && !(this.state.section.isListItem || this.state.section.isListSection) && !lastSection.isListSection) {
+            this._closeCurrentSection();
+            this._updateStateFromElement(node.parentElement);
+          }
+
+          // if we have consecutive list sections of different types (ul, ol) then
+          // ensure we close the current section and start a new one
+          var isNewListSection = lastSection && lastSection.isListSection && this.state.section.isListItem && isListSection && tagName !== lastSection.tagName;
+
+          if (isNewListSection || isListSection && !isNestedListSection || isMarkupSection || isListItem) {
+            // don't break out of the list for list items that contain a single <p>.
+            // deals with typical case of <li><p>Text</p></li><li><p>Text</p></li>
+            if (this.state.section.isListItem && tagName === 'p' && !node.nextSibling && (0, _mobiledocKitUtilsArrayUtils.contains)(_mobiledocKitModelsListItem.VALID_LIST_ITEM_TAGNAMES, (0, _mobiledocKitUtilsDomUtils.normalizeTagName)(node.parentElement.tagName))) {
+              this.parseElementNode(node);
+              return;
+            }
+
+            // avoid creating empty paragraphs due to wrapper elements around
+            // section-creating elements
+            if (this.state.section.isMarkerable && !this.state.text && this.state.section.markers.length === 0) {
+              this.state.section = null;
+            } else {
+              this._closeCurrentSection();
+            }
+
+            this._updateStateFromElement(node);
+          }
+
+          if (this.state.section.isListSection) {
+            // ensure the list section is closed and added to the sections list.
+            // _closeCurrentSection handles pushing list items onto the list section
+            this._closeCurrentSection();
+
+            (0, _mobiledocKitUtilsArrayUtils.forEach)(node.childNodes, function (node) {
+              _this3.parseNode(node);
+            });
+            return;
+          }
         }
 
         switch (node.nodeType) {
@@ -9701,7 +9909,7 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
         var state = this.state;
 
         var markups = this._markupsFromElement(element);
-        if (markups.length && state.text.length) {
+        if (markups.length && state.text.length && state.section.isMarkerable) {
           this._createMarker();
         }
         (_state$markups = state.markups).push.apply(_state$markups, _toConsumableArray(markups));
@@ -9710,7 +9918,7 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
           _this4.parseNode(node);
         });
 
-        if (markups.length && state.text.length) {
+        if (markups.length && state.text.length && state.section.isMarkerable) {
           // create the marker started for this node
           this._createMarker();
         }
@@ -9728,6 +9936,10 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
     }, {
       key: '_updateStateFromElement',
       value: function _updateStateFromElement(element) {
+        if ((0, _mobiledocKitUtilsDomUtils.isCommentNode)(element)) {
+          return;
+        }
+
         var state = this.state;
 
         state.section = this._createSectionFromElement(element);
@@ -9740,17 +9952,41 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
         var sections = this.sections;
         var state = this.state;
 
+        var lastSection = sections[sections.length - 1];
+
         if (!state.section) {
           return;
         }
 
         // close a trailing text node if it exists
-        if (state.text.length) {
+        if (state.text.length && state.section.isMarkerable) {
           this._createMarker();
         }
 
-        sections.push(state.section);
+        // push listItems onto the listSection or add a new section
+        if (state.section.isListItem && lastSection && lastSection.isListSection) {
+          (0, _mobiledocKitParsersDom.trimSectionText)(state.section);
+          lastSection.items.append(state.section);
+        } else {
+          // avoid creating empty markup sections, especially useful for indented source
+          if (state.section.isMarkerable && !state.section.text.trim() && !(0, _mobiledocKitUtilsArrayUtils.any)(state.section.markers, function (marker) {
+            return marker.isAtom;
+          })) {
+            state.section = null;
+            state.text = '';
+            return;
+          }
+
+          // remove empty list sections before creating a new section
+          if (lastSection && lastSection.isListSection && lastSection.items.length === 0) {
+            sections.pop();
+          }
+
+          sections.push(state.section);
+        }
+
         state.section = null;
+        state.text = '';
       }
     }, {
       key: '_markupsFromElement',
@@ -9844,6 +10080,10 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
     }, {
       key: '_createSectionFromElement',
       value: function _createSectionFromElement(element) {
+        if ((0, _mobiledocKitUtilsDomUtils.isCommentNode)(element)) {
+          return;
+        }
+
         var builder = this.builder;
 
         var section = undefined;
@@ -9874,7 +10114,7 @@ define('mobiledoc-kit/parsers/section', ['exports', 'mobiledoc-kit/models/markup
     }, {
       key: '_isSkippable',
       value: function _isSkippable(element) {
-        return (0, _mobiledocKitUtilsDomUtils.isCommentNode)(element) || element.nodeType === _mobiledocKitUtilsDomUtils.NODE_TYPES.ELEMENT && (0, _mobiledocKitUtilsArrayUtils.contains)(SKIPPABLE_ELEMENT_TAG_NAMES, (0, _mobiledocKitUtilsDomUtils.normalizeTagName)(element.tagName));
+        return element.nodeType === _mobiledocKitUtilsDomUtils.NODE_TYPES.ELEMENT && (0, _mobiledocKitUtilsArrayUtils.contains)(SKIPPABLE_ELEMENT_TAG_NAMES, (0, _mobiledocKitUtilsDomUtils.normalizeTagName)(element.tagName));
       }
     }]);
 
@@ -9954,10 +10194,12 @@ define('mobiledoc-kit/parsers/text', ['exports', 'mobiledoc-kit/utils/assert', '
 
         switch (type) {
           case _mobiledocKitModelsTypes.LIST_SECTION_TYPE:
-            var item = this.builder.createListItem(markers);
-            var list = this.builder.createListSection(tagName, [item]);
-            section = list;
-            break;
+            {
+              var item = this.builder.createListItem(markers);
+              var list = this.builder.createListSection(tagName, [item]);
+              section = list;
+              break;
+            }
           case _mobiledocKitModelsTypes.MARKUP_SECTION_TYPE:
             section = this.builder.createMarkupSection(tagName, markers);
             break;
@@ -10610,7 +10852,6 @@ define('mobiledoc-kit/renderers/editor-dom', ['exports', 'mobiledoc-kit/models/c
 
           method = postNode.type;
           (0, _mobiledocKitUtilsAssert['default'])('EditorDom visitor cannot handle type ' + method, !!this.visitor[method]);
-          // jshint -W083
           this.visitor[method](renderNode, postNode, function () {
             for (var _len = arguments.length, args = Array(_len), _key = 0; _key < _len; _key++) {
               args[_key] = arguments[_key];
@@ -10618,7 +10859,6 @@ define('mobiledoc-kit/renderers/editor-dom', ['exports', 'mobiledoc-kit/models/c
 
             return _this2.visit.apply(_this2, [renderTree].concat(args));
           });
-          // jshint +W083
           renderNode.markClean();
           renderNode = this.nodes.shift();
         }
@@ -11599,7 +11839,9 @@ define('mobiledoc-kit/utils/cursor/position', ['exports', 'mobiledoc-kit/utils/d
   var FORWARD = _mobiledocKitUtilsKey.DIRECTION.FORWARD;
   var BACKWARD = _mobiledocKitUtilsKey.DIRECTION.BACKWARD;
 
-  var WORD_CHAR_REGEX = /\w|_|:/;
+  // generated via http://xregexp.com/ to cover chars that \w misses
+  // (new XRegExp('\\p{Alphabetic}|[0-9]|_|:')).toString()
+  var WORD_CHAR_REGEX = /[A-Za-zªµºÀ-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͅͰ-ʹͶͷͺ-ͽͿΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԯԱ-Ֆՙա-ևְ-ׇֽֿׁׂׅׄא-תװ-ײؐ-ؚؠ-ٗٙ-ٟٮ-ۓە-ۜۡ-ۭۨ-ۯۺ-ۼۿܐ-ܿݍ-ޱߊ-ߪߴߵߺࠀ-ࠗࠚ-ࠬࡀ-ࡘࢠ-ࢴࣣ-ࣰࣩ-ऻऽ-ौॎ-ॐॕ-ॣॱ-ঃঅ-ঌএঐও-নপ-রলশ-হঽ-ৄেৈোৌৎৗড়ঢ়য়-ৣৰৱਁ-ਃਅ-ਊਏਐਓ-ਨਪ-ਰਲਲ਼ਵਸ਼ਸਹਾ-ੂੇੈੋੌੑਖ਼-ੜਫ਼ੰ-ੵઁ-ઃઅ-ઍએ-ઑઓ-નપ-રલળવ-હઽ-ૅે-ૉોૌૐૠ-ૣૹଁ-ଃଅ-ଌଏଐଓ-ନପ-ରଲଳଵ-ହଽ-ୄେୈୋୌୖୗଡ଼ଢ଼ୟ-ୣୱஂஃஅ-ஊஎ-ஐஒ-கஙசஜஞடணதந-பம-ஹா-ூெ-ைொ-ௌௐௗఀ-ఃఅ-ఌఎ-ఐఒ-నప-హఽ-ౄె-ైొ-ౌౕౖౘ-ౚౠ-ౣಁ-ಃಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽ-ೄೆ-ೈೊ-ೌೕೖೞೠ-ೣೱೲഁ-ഃഅ-ഌഎ-ഐഒ-ഺഽ-ൄെ-ൈൊ-ൌൎൗൟ-ൣൺ-ൿංඃඅ-ඖක-නඳ-රලව-ෆා-ුූෘ-ෟෲෳก-ฺเ-ๆํກຂຄງຈຊຍດ-ທນ-ຟມ-ຣລວສຫອ-ູົ-ຽເ-ໄໆໍໜ-ໟༀཀ-ཇཉ-ཬཱ-ཱྀྈ-ྗྙ-ྼက-ံးျ-ဿၐ-ၢၥ-ၨၮ-ႆႎႜႝႠ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚ፟ᎀ-ᎏᎠ-Ᏽᏸ-ᏽᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛸᜀ-ᜌᜎ-ᜓᜠ-ᜳᝀ-ᝓᝠ-ᝬᝮ-ᝰᝲᝳក-ឳា-ៈៗៜᠠ-ᡷᢀ-ᢪᢰ-ᣵᤀ-ᤞᤠ-ᤫᤰ-ᤸᥐ-ᥭᥰ-ᥴᦀ-ᦫᦰ-ᧉᨀ-ᨛᨠ-ᩞᩡ-ᩴᪧᬀ-ᬳᬵ-ᭃᭅ-ᭋᮀ-ᮩᮬ-ᮯᮺ-ᯥᯧ-ᯱᰀ-ᰵᱍ-ᱏᱚ-ᱽᳩ-ᳬᳮ-ᳳᳵᳶᴀ-ᶿᷧ-ᷴḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼⁱⁿₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎⅠ-ↈⒶ-ⓩⰀ-Ⱞⰰ-ⱞⱠ-ⳤⳫ-ⳮⳲⳳⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⷠ-ⷿⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄭㄱ-ㆎㆠ-ㆺㇰ-ㇿ㐀-䶵一-鿕ꀀ-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘟꘪꘫꙀ-ꙮꙴ-ꙻꙿ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꞭꞰ-ꞷꟷ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠧꡀ-ꡳꢀ-ꣃꣲ-ꣷꣻꣽꤊ-ꤪꤰ-ꥒꥠ-ꥼꦀ-ꦲꦴ-ꦿꧏꧠ-ꧤꧦ-ꧯꧺ-ꧾꨀ-ꨶꩀ-ꩍꩠ-ꩶꩺꩾ-ꪾꫀꫂꫛ-ꫝꫠ-ꫯꫲ-ꫵꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꬰ-ꭚꭜ-ꭥꭰ-ꯪ가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִ-ﬨשׁ-זּטּ-לּמּנּסּףּפּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼＡ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ]|[0-9]|_|:/;
 
   function findParentSectionFromNode(renderTree, node) {
     var renderNode = renderTree.findRenderNodeFromElement(node, function (renderNode) {
@@ -12057,6 +12299,12 @@ define('mobiledoc-kit/utils/cursor/position', ['exports', 'mobiledoc-kit/utils/d
                 sectionOffset += postNode.length;
               }
               position = new Position(section, sectionOffset);
+            } else if (offset >= elementNode.childNodes.length) {
+
+              // This is to deal with how Firefox handles triple-click selections.
+              // See https://stackoverflow.com/a/21234837/1269194 for an
+              // explanation.
+              position = section.tailPosition();
             } else {
               // The offset is 0 if the cursor is on a non-atom-wrapper element node
               // (e.g., a <br> tag in a blank markup section)
@@ -12248,8 +12496,10 @@ define('mobiledoc-kit/utils/cursor/range', ['exports', 'mobiledoc-kit/utils/curs
           case _mobiledocKitUtilsKey.DIRECTION.BACKWARD:
             return new Range(head.move(units), tail, currentDirection);
           default:
-            var newDirection = units > 0 ? _mobiledocKitUtilsKey.DIRECTION.FORWARD : _mobiledocKitUtilsKey.DIRECTION.BACKWARD;
-            return new Range(head, tail, newDirection).extend(units);
+            {
+              var newDirection = units > 0 ? _mobiledocKitUtilsKey.DIRECTION.FORWARD : _mobiledocKitUtilsKey.DIRECTION.BACKWARD;
+              return new Range(head, tail, newDirection).extend(units);
+            }
         }
       }
 
@@ -12301,12 +12551,20 @@ define('mobiledoc-kit/utils/cursor/range', ['exports', 'mobiledoc-kit/utils/curs
           return !detectMarker(i);
         };
 
-        var headMarker = head.section.markers.detect(firstNotMatchingDetect, head.marker, true);
-        headMarker = headMarker && headMarker.next || head.marker;
+        var headMarker = headSection.markers.detect(firstNotMatchingDetect, head.marker, true);
+        if (!headMarker && detectMarker(headSection.markers.head)) {
+          headMarker = headSection.markers.head;
+        } else {
+          headMarker = headMarker.next || head.marker;
+        }
         var headPosition = new _mobiledocKitUtilsCursorPosition['default'](headSection, headSection.offsetOfMarker(headMarker));
 
         var tailMarker = tail.section.markers.detect(firstNotMatchingDetect, tail.marker);
-        tailMarker = tailMarker && tailMarker.prev || tail.marker;
+        if (!tailMarker && detectMarker(headSection.markers.tail)) {
+          tailMarker = headSection.markers.tail;
+        } else {
+          tailMarker = tailMarker.prev || tail.marker;
+        }
         var tailPosition = new _mobiledocKitUtilsCursorPosition['default'](tail.section, tail.section.offsetOfMarker(tailMarker) + tailMarker.length);
 
         return headPosition.toRange(tailPosition, direction);
@@ -12418,7 +12676,8 @@ define("mobiledoc-kit/utils/deprecate", ["exports"], function (exports) {
     var conditional = arguments.length <= 1 || arguments[1] === undefined ? false : arguments[1];
 
     if (!conditional) {
-      console.log("[mobiledoc-kit] [DEPRECATED]: " + message); // jshint ignore:line
+      // eslint-disable-next-line no-console
+      console.log("[mobiledoc-kit] [DEPRECATED]: " + message);
     }
   }
 });
@@ -12667,6 +12926,24 @@ define('mobiledoc-kit/utils/element-utils', ['exports', 'mobiledoc-kit/utils/str
     }
   }
 
+  function whenElementIsNotInDOM(element, callback) {
+    var isCanceled = false;
+    var observerFn = function observerFn() {
+      if (isCanceled) {
+        return;
+      }
+      if (!element.parentNode) {
+        callback();
+      } else {
+        window.requestAnimationFrame(observerFn);
+      }
+    };
+    observerFn();
+    return { cancel: function cancel() {
+        return isCanceled = true;
+      } };
+  }
+
   exports.setData = setData;
   exports.getEventTargetMatchingTag = getEventTargetMatchingTag;
   exports.getElementRelativeOffset = getElementRelativeOffset;
@@ -12674,6 +12951,7 @@ define('mobiledoc-kit/utils/element-utils', ['exports', 'mobiledoc-kit/utils/str
   exports.positionElementToRect = positionElementToRect;
   exports.positionElementHorizontallyCenteredToRect = positionElementHorizontallyCenteredToRect;
   exports.positionElementCenteredBelow = positionElementCenteredBelow;
+  exports.whenElementIsNotInDOM = whenElementIsNotInDOM;
 });
 define('mobiledoc-kit/utils/environment', ['exports'], function (exports) {
   'use strict';
@@ -12736,12 +13014,13 @@ define("mobiledoc-kit/utils/fixed-queue", ["exports"], function (exports) {
 
   exports["default"] = FixedQueue;
 });
-define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'mobiledoc-kit/utils/characters', 'mobiledoc-kit/utils/assert'], function (exports, _mobiledocKitUtilsKeycodes, _mobiledocKitUtilsCharacters, _mobiledocKitUtilsAssert) {
+define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'mobiledoc-kit/utils/keys', 'mobiledoc-kit/utils/characters', 'mobiledoc-kit/utils/assert'], function (exports, _mobiledocKitUtilsKeycodes, _mobiledocKitUtilsKeys, _mobiledocKitUtilsCharacters, _mobiledocKitUtilsAssert) {
   'use strict';
 
   var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
   exports.modifierMask = modifierMask;
+  exports.specialCharacterToCode = specialCharacterToCode;
 
   function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
 
@@ -12795,7 +13074,10 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
     DEL: _mobiledocKitUtilsKeycodes['default'].DELETE
   };
 
-  exports.SPECIAL_KEYS = SPECIAL_KEYS;
+  function specialCharacterToCode(specialCharacter) {
+    return SPECIAL_KEYS[specialCharacter];
+  }
+
   // heuristic for determining if `event` is a key event
   function isKeyEvent(event) {
     return (/^key/.test(event.type)
@@ -12811,6 +13093,7 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
     function Key(event) {
       _classCallCheck(this, Key);
 
+      this.key = event.key;
       this.keyCode = event.keyCode;
       this.charCode = event.charCode;
       this.event = event;
@@ -12825,20 +13108,38 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
         }
         return String.fromCharCode(this.charCode);
       }
+
+      // See https://caniuse.com/#feat=keyboardevent-key for browser support.
+    }, {
+      key: 'isKeySupported',
+      value: function isKeySupported() {
+        return this.key;
+      }
+    }, {
+      key: 'isKey',
+      value: function isKey(identifier) {
+        if (this.isKeySupported()) {
+          (0, _mobiledocKitUtilsAssert['default'])('Must define Keys.' + identifier + '.', _mobiledocKitUtilsKeys['default'][identifier]);
+          return this.key === _mobiledocKitUtilsKeys['default'][identifier];
+        } else {
+          (0, _mobiledocKitUtilsAssert['default'])('Must define Keycodes.' + identifier + '.', _mobiledocKitUtilsKeycodes['default'][identifier]);
+          return this.keyCode === _mobiledocKitUtilsKeycodes['default'][identifier];
+        }
+      }
     }, {
       key: 'isEscape',
       value: function isEscape() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].ESC;
+        return this.isKey('ESC');
       }
     }, {
       key: 'isDelete',
       value: function isDelete() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].BACKSPACE || this.keyCode === _mobiledocKitUtilsKeycodes['default'].DELETE;
+        return this.isKey('BACKSPACE') || this.isForwardDelete();
       }
     }, {
       key: 'isForwardDelete',
       value: function isForwardDelete() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].DELETE;
+        return this.isKey('DELETE');
       }
     }, {
       key: 'isArrow',
@@ -12848,7 +13149,7 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
     }, {
       key: 'isHorizontalArrow',
       value: function isHorizontalArrow() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].LEFT || this.keyCode === _mobiledocKitUtilsKeycodes['default'].RIGHT;
+        return this.isLeftArrow() || this.isRightArrow();
       }
     }, {
       key: 'isHorizontalArrowWithoutModifiersOtherThanShift',
@@ -12858,56 +13159,75 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
     }, {
       key: 'isVerticalArrow',
       value: function isVerticalArrow() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].UP || this.keyCode === _mobiledocKitUtilsKeycodes['default'].DOWN;
+        return this.isKey('UP') || this.isKey('DOWN');
       }
     }, {
       key: 'isLeftArrow',
       value: function isLeftArrow() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].LEFT;
+        return this.isKey('LEFT');
       }
     }, {
       key: 'isRightArrow',
       value: function isRightArrow() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].RIGHT;
+        return this.isKey('RIGHT');
       }
     }, {
       key: 'isHome',
       value: function isHome() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].HOME;
+        return this.isKey('HOME');
       }
     }, {
       key: 'isEnd',
       value: function isEnd() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].END;
+        return this.isKey('END');
+      }
+    }, {
+      key: 'isPageUp',
+      value: function isPageUp() {
+        return this.isKey('PAGEUP');
+      }
+    }, {
+      key: 'isPageDown',
+      value: function isPageDown() {
+        return this.isKey('PAGEDOWN');
+      }
+    }, {
+      key: 'isInsert',
+      value: function isInsert() {
+        return this.isKey('INS');
+      }
+    }, {
+      key: 'isClear',
+      value: function isClear() {
+        return this.isKey('CLEAR');
+      }
+    }, {
+      key: 'isPause',
+      value: function isPause() {
+        return this.isKey('PAUSE');
       }
     }, {
       key: 'isSpace',
       value: function isSpace() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].SPACE;
+        return this.isKey('SPACE');
       }
+
+      // In Firefox, pressing ctrl-TAB will switch to another open browser tab, but
+      // it will also fire a keydown event for the tab+modifier (ctrl). This causes
+      // Mobiledoc to erroneously insert a tab character before FF switches to the
+      // new browser tab.  Chrome doesn't fire this event so the issue doesn't
+      // arise there. Fix this by returning false when the TAB key event includes a
+      // modifier.
+      // See: https://github.com/bustle/mobiledoc-kit/issues/565
     }, {
       key: 'isTab',
       value: function isTab() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].TAB;
+        return !this.hasAnyModifier() && this.isKey('TAB');
       }
     }, {
       key: 'isEnter',
       value: function isEnter() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].ENTER;
-      }
-
-      /**
-       * If the shift key is depressed.
-       * For example, while holding down meta+shift, pressing the "v"
-       * key would result in an event whose `Key` had `isShift()` with a truthy value,
-       * because the shift key is down when pressing the "v".
-       * @see {isShiftKey} which checks if the key is actually the shift key itself.
-       * @return {bool}
-       */
-    }, {
-      key: 'isShift',
-      value: function isShift() {
-        return this.shiftKey;
+        return this.isKey('ENTER');
       }
 
       /*
@@ -12919,7 +13239,7 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
     }, {
       key: 'isShiftKey',
       value: function isShiftKey() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].SHIFT;
+        return this.isKey('SHIFT');
       }
 
       /*
@@ -12930,7 +13250,7 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
     }, {
       key: 'isAltKey',
       value: function isAltKey() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].ALT;
+        return this.isKey('ALT');
       }
 
       /*
@@ -12941,7 +13261,28 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
     }, {
       key: 'isCtrlKey',
       value: function isCtrlKey() {
-        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].CTRL;
+        return this.isKey('CTRL');
+      }
+    }, {
+      key: 'isIME',
+      value: function isIME() {
+        // FIXME the IME action seems to get lost when we issue an
+        // `editor.deleteSelection` before it (in Chrome)
+        return this.keyCode === _mobiledocKitUtilsKeycodes['default'].IME;
+      }
+    }, {
+      key: 'isShift',
+
+      /**
+       * If the shift key is depressed.
+       * For example, while holding down meta+shift, pressing the "v"
+       * key would result in an event whose `Key` had `isShift()` with a truthy value,
+       * because the shift key is down when pressing the "v".
+       * @see {isShiftKey} which checks if the key is actually the shift key itself.
+       * @return {bool}
+       */
+      value: function isShift() {
+        return this.shiftKey;
       }
     }, {
       key: 'hasModifier',
@@ -12954,33 +13295,60 @@ define('mobiledoc-kit/utils/key', ['exports', 'mobiledoc-kit/utils/keycodes', 'm
         return !!this.modifierMask;
       }
     }, {
-      key: 'isPrintable',
+      key: 'isPrintableKey',
+      value: function isPrintableKey() {
+        return !(this.isArrow() || this.isHome() || this.isEnd() || this.isPageUp() || this.isPageDown() || this.isInsert() || this.isClear() || this.isPause() || this.isEscape());
+      }
+    }, {
+      key: 'isNumberKey',
+      value: function isNumberKey() {
+        if (this.isKeySupported()) {
+          return this.key >= '0' && this.key <= '9';
+        } else {
+          var code = this.keyCode;
+          return code >= _mobiledocKitUtilsKeycodes['default']['0'] && code <= _mobiledocKitUtilsKeycodes['default']['9'] || code >= _mobiledocKitUtilsKeycodes['default'].NUMPAD_0 && code <= _mobiledocKitUtilsKeycodes['default'].NUMPAD_9; // numpad keys
+        }
+      }
+    }, {
+      key: 'isLetterKey',
+      value: function isLetterKey() {
+        if (this.isKeySupported()) {
+          var key = this.key;
+          return key >= 'a' && key <= 'z' || key >= 'A' && key <= 'Z';
+        } else {
+          var code = this.keyCode;
+          return code >= _mobiledocKitUtilsKeycodes['default'].A && code <= _mobiledocKitUtilsKeycodes['default'].Z || code >= _mobiledocKitUtilsKeycodes['default'].a && code <= _mobiledocKitUtilsKeycodes['default'].z;
+        }
+      }
+    }, {
+      key: 'isPunctuation',
+      value: function isPunctuation() {
+        if (this.isKeySupported()) {
+          var key = this.key;
+          return key >= ';' && key <= '`' || key >= '[' && key <= '"';
+        } else {
+          var code = this.keyCode;
+          return code >= _mobiledocKitUtilsKeycodes['default'][';'] && code <= _mobiledocKitUtilsKeycodes['default']['`'] || code >= _mobiledocKitUtilsKeycodes['default']['['] && code <= _mobiledocKitUtilsKeycodes['default']['"'];
+        }
+      }
 
       /**
        * See https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/keyCode#Printable_keys_in_standard_position
        *   and http://stackoverflow.com/a/12467610/137784
        */
+    }, {
+      key: 'isPrintable',
       value: function isPrintable() {
         if (this.ctrlKey || this.metaKey) {
           return false;
         }
 
-        var code = this.keyCode;
-
-        // Firefox calls keypress events for arrow keys, but they should not be
-        // considered printable
-        if (this.isArrow()) {
+        // Firefox calls keypress events for some keys that should not be printable
+        if (!this.isPrintableKey()) {
           return false;
         }
 
-        return code !== 0 || this.toString().length > 0 || code >= _mobiledocKitUtilsKeycodes['default']['0'] && code <= _mobiledocKitUtilsKeycodes['default']['9'] || // number keys
-        this.isSpace() || this.isTab() || this.isEnter() || code >= _mobiledocKitUtilsKeycodes['default'].A && code <= _mobiledocKitUtilsKeycodes['default'].Z || // letter keys
-        code >= _mobiledocKitUtilsKeycodes['default'].a && code <= _mobiledocKitUtilsKeycodes['default'].z || code >= _mobiledocKitUtilsKeycodes['default'].NUMPAD_0 && code <= _mobiledocKitUtilsKeycodes['default'].NUMPAD_9 || // numpad keys
-        code >= _mobiledocKitUtilsKeycodes['default'][';'] && code <= _mobiledocKitUtilsKeycodes['default']['`'] || // punctuation
-        code >= _mobiledocKitUtilsKeycodes['default']['['] && code <= _mobiledocKitUtilsKeycodes['default']['"'] ||
-        // FIXME the IME action seems to get lost when we issue an `editor.deleteSelection`
-        // before it (in Chrome)
-        code === _mobiledocKitUtilsKeycodes['default'].IME;
+        return this.keyCode !== 0 || this.toString().length > 0 || this.isNumberKey() || this.isSpace() || this.isTab() || this.isEnter() || this.isLetterKey() || this.isPunctuation() || this.isIME();
       }
     }, {
       key: 'direction',
@@ -13056,6 +13424,8 @@ define('mobiledoc-kit/utils/keycodes', ['exports'], function (exports) {
     IME: 229,
 
     TAB: 9,
+    CLEAR: 12,
+    PAUSE: 19,
     PAGEUP: 33,
     PAGEDOWN: 34,
     END: 35,
@@ -13068,6 +13438,33 @@ define('mobiledoc-kit/utils/keycodes', ['exports'], function (exports) {
     META: 91,
     ALT: 18,
     CTRL: 17
+  };
+});
+define('mobiledoc-kit/utils/keys', ['exports'], function (exports) {
+  'use strict';
+
+  exports['default'] = {
+    BACKSPACE: 'Backspace',
+    SPACE: ' ',
+    ENTER: 'Enter',
+    SHIFT: 'Shift',
+    ESC: 'Escape',
+    DELETE: 'Delete',
+    INS: 'Insert',
+    HOME: 'Home',
+    END: 'End',
+    PAGEUP: 'PageUp',
+    PAGEDOWN: 'PageDown',
+    CLEAR: 'Clear',
+    PAUSE: 'Pause',
+    TAB: 'Tab',
+    ALT: 'Alt',
+    CTRL: 'Control',
+
+    LEFT: 'ArrowLeft',
+    RIGHT: 'ArrowRight',
+    UP: 'ArrowUp',
+    DOWN: 'ArrowDown'
   };
 });
 define("mobiledoc-kit/utils/linked-item", ["exports"], function (exports) {
@@ -13174,25 +13571,29 @@ define('mobiledoc-kit/utils/linked-list', ['exports', 'mobiledoc-kit/utils/asser
 
             break;
           case 'middle':
-            var prevItem = nextItem.prev;
-            item.next = nextItem;
-            item.prev = prevItem;
-            nextItem.prev = item;
-            prevItem.next = item;
+            {
+              var prevItem = nextItem.prev;
+              item.next = nextItem;
+              item.prev = prevItem;
+              nextItem.prev = item;
+              prevItem.next = item;
 
-            break;
-          case 'end':
-            var tail = this.tail;
-            item.prev = tail;
-
-            if (tail) {
-              tail.next = item;
-            } else {
-              this.head = item;
+              break;
             }
-            this.tail = item;
+          case 'end':
+            {
+              var tail = this.tail;
+              item.prev = tail;
 
-            break;
+              if (tail) {
+                tail.next = item;
+              } else {
+                this.head = item;
+              }
+              this.tail = item;
+
+              break;
+            }
         }
       }
     }, {
@@ -13844,6 +14245,7 @@ define('mobiledoc-kit/utils/selection-utils', ['exports', 'mobiledoc-kit/utils/k
    * @see https://github.com/ProseMirror/prosemirror/blob/4c22e3fe97d87a355a0534e25d65aaf0c0d83e57/src/edit/dompos.js
    * @return {Object} {node, offset}
    */
+  /* eslint-disable complexity */
   function findOffsetInNode(_x, _x2) {
     var _again = true;
 
@@ -13901,6 +14303,7 @@ define('mobiledoc-kit/utils/selection-utils', ['exports', 'mobiledoc-kit/utils/k
       return { node: node, offset: offset };
     }
   }
+  /* eslint-enable complexity */
 
   function constrainNodeTo(node, parentNode, existingOffset) {
     var compare = parentNode.compareDocumentPosition(node);
@@ -14154,7 +14557,7 @@ define('mobiledoc-kit/utils/to-range', ['exports', 'mobiledoc-kit/utils/cursor/r
 define('mobiledoc-kit/version', ['exports'], function (exports) {
   'use strict';
 
-  exports['default'] = '0.10.16';
+  exports['default'] = '0.11.2-ghost.4';
 });
 define('mobiledoc-kit/views/tooltip', ['exports', 'mobiledoc-kit/views/view', 'mobiledoc-kit/utils/element-utils'], function (exports, _mobiledocKitViewsView, _mobiledocKitUtilsElementUtils) {
   'use strict';
@@ -14194,6 +14597,9 @@ define('mobiledoc-kit/views/tooltip', ['exports', 'mobiledoc-kit/views/view', 'm
 
       this.addEventListener(rootElement, 'mouseout', function (e) {
         clearTimeout(timeout);
+        if (_this.elementObserver) {
+          _this.elementObserver.cancel();
+        }
         var toElement = e.toElement || e.relatedTarget;
         if (toElement && toElement.className !== _this.element.className) {
           _this.hide();
@@ -14212,8 +14618,13 @@ define('mobiledoc-kit/views/tooltip', ['exports', 'mobiledoc-kit/views/view', 'm
     }, {
       key: 'showLink',
       value: function showLink(link, element) {
+        var _this2 = this;
+
         var message = '<a href="' + link + '" target="_blank">' + link + '</a>';
         this.showMessage(message, element);
+        this.elementObserver = (0, _mobiledocKitUtilsElementUtils.whenElementIsNotInDOM)(element, function () {
+          return _this2.hide();
+        });
       }
     }]);
 
