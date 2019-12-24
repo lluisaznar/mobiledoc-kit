@@ -1,0 +1,14 @@
+version: '3.7'
+services:
+    node:
+        build:
+            context: .
+            dockerfile: docker-node.Dockerfile
+        user: node:node
+        restart: always
+        ports:
+            -   "2020:4200"
+        volumes:
+            -   type: bind
+                source: .
+                target: /var/www/html
