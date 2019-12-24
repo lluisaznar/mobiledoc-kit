@@ -11,7 +11,7 @@ $(() => {
 let bootstrapEditor = () => {
   let el = $('#editor')[0];
   let editor = new Mobiledoc.Editor({
-    // placeholder: 'Type here',
+    placeholder: 'Type here',
     autofocus: true
   });
   editor.render(el);

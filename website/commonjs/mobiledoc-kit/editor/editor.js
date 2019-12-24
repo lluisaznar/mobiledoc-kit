@@ -80,7 +80,7 @@ Object.defineProperty(exports, 'EDITOR_ELEMENT_CLASS_NAME', {
 });
 
 var defaults = {
-  placeholder: 'Write motherfuckin\' here...',
+  placeholder: 'Write here...',
   spellcheck: true,
   autofocus: true,
   showLinkTooltips: true,

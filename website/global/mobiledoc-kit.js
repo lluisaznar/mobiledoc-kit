@@ -1869,7 +1869,7 @@ define('mobiledoc-kit/editor/editor', ['exports', 'mobiledoc-kit/views/tooltip',
   });
 
   var defaults = {
-    placeholder: 'Write motherfuckin\' here...',
+    placeholder: 'Write here...',
     spellcheck: true,
     autofocus: true,
     showLinkTooltips: true,
