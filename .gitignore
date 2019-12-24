@@ -53,3 +53,5 @@ export.sh
 /docs
 
 server.sh
+
+package-lock.json
