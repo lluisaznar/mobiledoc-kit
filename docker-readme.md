@@ -21,7 +21,7 @@
 # **Commands**
 
 ### View container's log
-    docker-compose logs -f
+    `docker-compose logs -f`
 
 ### Connect to running container's bash as **node**
-    ./bash node
+    `./bash node`
