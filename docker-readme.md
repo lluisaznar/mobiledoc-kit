@@ -8,7 +8,7 @@
     
     `./npm install`
 
-**2.** build demo
+**2.** build applications
     
     `./npm run build:website`
 

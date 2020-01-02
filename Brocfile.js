@@ -10,6 +10,7 @@ var jquery = require("./broccoli/jquery");
 var BroccoliLiveReload = require("broccoli-livereload");
 var replace = require("broccoli-string-replace");
 var demoTree = require("./broccoli/demo");
+var devTree = require("./broccoli/dev");
 
 var vendoredModules = [
   { name: "mobiledoc-dom-renderer" },
@@ -46,6 +47,7 @@ module.exports = mergeTrees([
   replaceVersion(builder.build("commonjs", buildOptions)),
   cssFiles,
   testTree,
-  demoTree()
+  demoTree(),
+  devTree()
 ]);
 
