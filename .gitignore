@@ -51,7 +51,7 @@ export.sh
 /dist
 /tmp
 /docs
-/webiste
+/website
 
 server.sh
 
