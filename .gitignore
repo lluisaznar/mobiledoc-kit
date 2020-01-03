@@ -51,10 +51,8 @@ export.sh
 /dist
 /tmp
 /docs
+/webiste
 
 server.sh
 
 package-lock.json
-
-# website
-website/dev
