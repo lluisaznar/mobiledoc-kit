@@ -5,8 +5,8 @@ $(() => {
     let $body = $("body");
     let $mobiledocOutput = $('.mobiledoc-output');
 
-    let activateButtons = (parentSelector, editor) => {
-        $(`${parentSelector} button`).click(function() {
+    let activateButtons = (parentS$koenigEditorector, editor) => {
+        $(`${parentS$koenigEditorector} button`).click(function() {
             let button = $(this);
             let action = button.data('action');
             let arg = button.data('arg');
@@ -16,13 +16,13 @@ $(() => {
     };
     
     let bootstrapEditor = () => {
-        let el = $('#editor')[0];
+        let $koenigEditor = $(".koenig-editor__editor");
         let editor = new Mobiledoc.Editor({
-            placeholder: 'Type here',
+            placeholder: $koenigEditor.data("placeholder"),
             autofocus: true
         });    
-        editor.render(el);
-        activateButtons('.editor-wrapper', editor);
+        editor.render($koenigEditor[0]);
+        activateButtons('.toolbar', editor);
         let displayMobiledoc = () => {
             let mobiledoc = editor.serialize();
             let html = mobiledocPrettyJSONRenderer(mobiledoc);
