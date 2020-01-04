@@ -40,7 +40,7 @@ $(() => {
         let $disableContent = $(".disable-content");
         let $btnClose = $mobiledocOutputWrapper.find(".btn-close");
     
-        $btnGeneratedOutput.add($btnClose).on("click", () => {
+        $btnGeneratedOutput.add($btnClose).add($disableContent).on("click", () => {
             $body.toggleClass("hide-scroll");
             $disableContent.add($mobiledocOutputWrapper).toggleClass("show");
         });
