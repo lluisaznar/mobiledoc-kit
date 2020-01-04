@@ -69,8 +69,8 @@ article, aside, footer, header, nav, section { display: block; }
 .fill-white g, .fill-white path { fill: #fff; }
 .mobiledoc-output-wrapper { display: none; overflow: auto; position: absolute; top: 10%; left: 25%; z-index: 9990; width: 50%; height: 80%; background-color: #fff; border-radius: 9px; -webkit-box-shadow: 3px 3px 15px -4px rgba(0,0,0,0.75); -moz-box-shadow: 3px 3px 15px -4px rgba(0,0,0,0.75); box-shadow: 3px 3px 15px -4px rgba(0,0,0,0.75); }
 .mobiledoc-output { padding: 1rem; white-space: pre-wrap; font-family: monospace; font-size: 12px; }
-.toolbar { list-style: none; text-align: center; }
-.toolbar > li { display: inline-block; }
+.toolbar { overflow: auto; margin: 0 0 25px 0; padding: 0; list-style: none; }
+.toolbar > li { float: left; }
 .disable-content { display: none; position: absolute; top: 0; left: 0; z-index: 9980; width: 100vw; height: 100vh; background-color: #fff; opacity: 0.7; }
 
 /****************
