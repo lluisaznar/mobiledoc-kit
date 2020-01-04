@@ -19,6 +19,7 @@ $(() => {
         let $koenigEditor = $(".koenig-editor__editor");
         let editor = new Mobiledoc.Editor({
             placeholder: $koenigEditor.data("placeholder"),
+            html: $koenigEditor.data("placeholder"),
             autofocus: true
         });    
         editor.render($koenigEditor[0]);
