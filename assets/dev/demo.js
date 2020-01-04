@@ -5,8 +5,8 @@ $(() => {
     let $body = $("body");
     let $mobiledocOutput = $('.mobiledoc-output');
 
-    let activateButtons = (parentS$koenigEditorector, editor) => {
-        $(`${parentS$koenigEditorector} button`).click(function() {
+    let activateButtons = (parentSelector, editor) => {
+        $(`${parentSelector} button`).click(function() {
             let button = $(this);
             let action = button.data('action');
             let arg = button.data('arg');
